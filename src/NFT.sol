@@ -9,9 +9,7 @@ import "@openzeppelin/contracts/interfaces/IERC721Receiver.sol";
 contract NFT is ERC721, Ownable {
     address marketplaceAddress;
 
-    constructor(
-        address _marketplaceAddress
-    ) ERC721("Eat The Blocks NFTs", "ETBNFT") {
+    constructor(address _marketplaceAddress) ERC721("Iyanuoluwa", "IY") {
         marketplaceAddress = _marketplaceAddress;
     }
 

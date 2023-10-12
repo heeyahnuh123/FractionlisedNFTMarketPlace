@@ -3,126 +3,141 @@ pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract NFTMarketplace is ReentrancyGuard, Ownable {
-    // Declaration of state variables
-    address payable public immutable feeAccount;
-    uint public immutable feePercent;
-    uint public itemCount;
-
-    struct Item {
-        uint itemId;
+contract FractionalNFTMarketplace is ReentrancyGuard {
+    struct FractionalNFT {
+        uint NFTId;
         IERC721 nft;
         uint tokenId;
-        uint price;
-        address payable seller;
-        bool sold;
+        uint totalFractions;
+        uint fractionsAvailable;
+        uint pricePerFraction;
+        uint totalValue;
+        address payable owner;
+        bool listed;
+        mapping(address => uint) fractions;
     }
 
-    event Offered(
-        uint itemId,
+    mapping(uint => FractionalNFT) public fractionalNFTs;
+    uint public fractionalNFTCount;
+    uint public platformFee;
+
+    event Fractionalized(
+        uint NFTId,
         address indexed nft,
         uint tokenId,
-        uint price,
-        address indexed seller
+        uint totalFractions,
+        uint pricePerFraction,
+        address indexed owner
     );
 
-    event Bought(
-        uint itemId,
-        address indexed nft,
-        uint tokenId,
-        uint price,
-        address indexed seller,
+    event FractionsPurchased(
+        uint NFTId,
+        uint fractionsAmount,
         address indexed buyer
     );
 
-    mapping(uint => Item) public items;
+    event FractionsTransferred(
+        uint NFTId,
+        uint fractionsAmount,
+        address indexed from,
+        address indexed to
+    );
 
-    constructor(uint _feePercent) {
-        // Initialize the ReentrancyGuard
-        //ReentrancyGuard.initialize();
-
-        // Initialize the Ownable contract with the contract owner
-        Ownable.transferOwnership(msg.sender);
-
-        // Setting the fee account
-        feeAccount = payable(msg.sender);
-        feePercent = _feePercent;
+    modifier onlyOwner(uint _NFTId) {
+        require(fractionalNFTs[_NFTId].owner == msg.sender, "Not the owner");
+        _;
     }
 
-    function makeItem(
+    constructor(uint _platformFee) {
+        platformFee = _platformFee;
+    }
+
+    function fractionalizeNFT(
         IERC721 _nft,
         uint _tokenId,
-        uint _price
+        uint _totalFractions,
+        uint _pricePerFraction
     ) external nonReentrant {
-        require(_price > 0, "Price must be greater than zero");
-
-        // Increasing the item count
-        itemCount++;
-
-        // Transferring the NFT to the smart contract
-        _nft.transferFrom(msg.sender, address(this), _tokenId);
-
-        // Adding a new item to the mapping
-        items[itemCount] = Item(
-            itemCount,
-            _nft,
-            _tokenId,
-            _price,
-            payable(msg.sender),
-            false
-        );
-
-        // Emitting an event
-        emit Offered(itemCount, address(_nft), _tokenId, _price, msg.sender);
-    }
-
-    function purchaseItem(uint _itemId) external payable nonReentrant {
-        uint _totalPrice = getTotalPrice(_itemId);
-        Item storage item = items[_itemId];
-
-        require(_itemId > 0 && _itemId <= itemCount, "Item doesn't exist");
         require(
-            msg.value >= _totalPrice,
-            "Not enough ether to cover item cost and market fee"
+            _totalFractions > 0,
+            "Total fractions must be greater than zero"
         );
-        require(!item.sold, "Item already sold");
+        require(
+            _pricePerFraction > 0,
+            "Price per fraction must be greater than zero"
+        );
 
-        // Pay the seller and transaction fee
-        item.seller.transfer(item.price);
-        feeAccount.transfer(_totalPrice - item.price);
+        fractionalNFTCount++;
+        fractionalNFTs[fractionalNFTCount].NFTId = fractionalNFTCount;
+        fractionalNFTs[fractionalNFTCount].nft = _nft;
+        fractionalNFTs[fractionalNFTCount].tokenId = _tokenId;
+        fractionalNFTs[fractionalNFTCount].totalFractions = _totalFractions;
+        fractionalNFTs[fractionalNFTCount].fractionsAvailable = _totalFractions;
+        fractionalNFTs[fractionalNFTCount].pricePerFraction = _pricePerFraction;
+        fractionalNFTs[fractionalNFTCount].totalValue =
+            _totalFractions *
+            _pricePerFraction;
+        fractionalNFTs[fractionalNFTCount].owner = payable(msg.sender);
+        fractionalNFTs[fractionalNFTCount].listed = true;
 
-        // Update the item to reflect that it has been sold
-        item.sold = true;
-
-        // Transfer the NFT to the buyer
-        item.nft.transferFrom(address(this), msg.sender, item.tokenId);
-
-        // Emitting a bought event
-        emit Bought(
-            _itemId,
-            address(item.nft),
-            item.tokenId,
-            item.price,
-            item.seller,
+        emit Fractionalized(
+            fractionalNFTCount,
+            address(_nft),
+            _tokenId,
+            _totalFractions,
+            _pricePerFraction,
             msg.sender
         );
     }
 
-    function getTotalPrice(uint _itemId) public view returns (uint) {
-        return ((items[_itemId].price * (100 + feePercent)) / 100);
+    function purchaseFractions(
+        uint _NFTId,
+        uint _fractionsAmount
+    ) external payable nonReentrant {
+        FractionalNFT storage fractionalNFT = fractionalNFTs[_NFTId];
+        require(
+            _NFTId > 0 && _NFTId <= fractionalNFTCount,
+            "NFT doesn't exist"
+        );
+        require(fractionalNFT.listed, "NFT not listed for fractionalization");
+        require(
+            _fractionsAmount > 0 &&
+                _fractionsAmount <= fractionalNFT.fractionsAvailable,
+            "Invalid fractions amount"
+        );
+        uint _totalPrice = _fractionsAmount * fractionalNFT.pricePerFraction;
+        uint platformAmount = (_totalPrice * platformFee) / 1000;
+        uint sellerAmount = _totalPrice - platformAmount;
+
+        require(
+            msg.value >= _totalPrice,
+            "Not enough Ether to cover fraction cost"
+        );
+
+        fractionalNFT.owner.transfer(sellerAmount);
+        payable(address(this)).transfer(platformAmount);
+        fractionalNFT.fractionsAvailable -= _fractionsAmount;
+        fractionalNFT.fractions[msg.sender] += _fractionsAmount;
+
+        emit FractionsPurchased(_NFTId, _fractionsAmount, msg.sender);
     }
 
-    // Function to allow the platform to withdraw accumulated fees
-    function withdrawPlatformFees() external onlyOwner {
-        require(address(this).balance > 0, "No balance to withdraw");
-        uint platformFee = (address(this).balance * feePercent) / 1000;
-        payable(owner()).transfer(platformFee);
-    }
+    function transferFractions(
+        uint _NFTId,
+        uint _fractionsAmount,
+        address _to
+    ) external nonReentrant {
+        FractionalNFT storage fractionalNFT = fractionalNFTs[_NFTId];
+        require(_NFTId > 0, "NFT doesn't exist");
+        require(
+            fractionalNFT.fractions[msg.sender] >= _fractionsAmount,
+            "Not enough fractions to transfer"
+        );
 
-    // Function to check the contract's balance
-    function contractBalance() external view returns (uint) {
-        return address(this).balance;
+        fractionalNFT.fractions[msg.sender] -= _fractionsAmount;
+        fractionalNFT.fractions[_to] += _fractionsAmount;
+
+        emit FractionsTransferred(_NFTId, _fractionsAmount, msg.sender, _to);
     }
 }
